@@ -22,29 +22,33 @@ suppressPackageStartupMessages({
 # -----------------------------
 # Data handling
 # -----------------------------
-load_argentina_data <- function(path, sheet = 1, date_col = NULL, start_date = NULL, end_date = NULL, freq = "A") {
-  df <- read_excel(path, sheet = sheet) %>% as.data.frame()
-  if (!is.null(date_col) && date_col %in% names(df)) {
-    df[[date_col]] <- as.Date(df[[date_col]])
-    df <- df %>% arrange(.data[[date_col]]) %>% tibble::column_to_rownames(date_col)
-  } else {
-    rownames(df) <- seq_len(nrow(df))
+load_argentina_data <- function(path, sheet = 1, header_row = 4, date_col = NULL, start_date = NULL, end_date = NULL, freq = "Q") {
+  # Skip metadata rows; header_row is one-based for readxl::read_excel
+  df <- read_excel(path, sheet = sheet, skip = header_row - 1) %>% as.data.frame()
+
+  if (is.null(date_col)) {
+    date_col <- names(df)[1]
   }
+  df[[date_col]] <- as.Date(df[[date_col]])
+  df <- df %>% filter(!is.na(.data[[date_col]])) %>% arrange(.data[[date_col]])
+  rownames(df) <- df[[date_col]]
+
   if (!is.null(start_date)) {
-    df <- df[as.numeric(rownames(df)) >= start_date, , drop = FALSE]
+    df <- df[df[[date_col]] >= as.Date(start_date), , drop = FALSE]
   }
   if (!is.null(end_date)) {
-    df <- df[as.numeric(rownames(df)) <= end_date, , drop = FALSE]
+    df <- df[df[[date_col]] <= as.Date(end_date), , drop = FALSE]
   }
   return(df)
 }
 
 detrend_hp_safe <- function(x, lambda_hp) {
-  if (length(stats::na.omit(x)) < 3) {
+  clean <- stats::na.omit(x)
+  if (length(clean) < 3) {
     # Fallback when HP filter cannot be computed (avoids diag() error)
-    return(x - mean(x, na.rm = TRUE))
+    return(clean - mean(clean, na.rm = TRUE))
   }
-  return(hpfilter(x, freq = lambda_hp)$cycle)
+  return(hpfilter(clean, freq = lambda_hp)$cycle)
 }
 
 build_macro_series <- function(df, lambda_hp = 1600) {
@@ -92,20 +96,26 @@ std_corr_table <- function(cyc, var_order) {
 # -----------------------------
 # Calibration
 # -----------------------------
-calibrate_parameters <- function(df, labor_share_col = NULL) {
+calibrate_parameters <- function(df, labor_share_col = "National Accounts-Based Variables, Share of Labour Compensation in GDP at National Prices, Current Prices, Per Capita") {
   if (!is.null(labor_share_col) && labor_share_col %in% names(df)) {
-    alpha <- 1 - mean(df[[labor_share_col]], na.rm = TRUE)
+    labor_share <- as.numeric(df[[labor_share_col]])
+    if (median(labor_share, na.rm = TRUE) > 1) labor_share <- labor_share / 100
+    alpha <- 1 - mean(labor_share, na.rm = TRUE)
   } else {
     alpha <- 0.33
   }
-  delta <- mean(df[["National Accounts-Based Variables, Average Depreciation Rate of the Capital Stock"]], na.rm = TRUE)
-  r_mean <- mean(df[["National Accounts-Based Variables, Real Internal Rate of Return"]], na.rm = TRUE)
+  delta <- as.numeric(df[["National Accounts-Based Variables, Average Depreciation Rate of the Capital Stock"]])
+  if (median(delta, na.rm = TRUE) > 1) delta <- delta / 100
+  delta <- mean(delta, na.rm = TRUE)
+  r_mean <- as.numeric(df[["National Accounts-Based Variables, Real Internal Rate of Return"]])
+  if (median(r_mean, na.rm = TRUE) > 1) r_mean <- r_mean / 100
+  r_mean <- mean(r_mean, na.rm = TRUE)
   beta <- 1 / (1 + r_mean)
 
   tfp <- log(as.numeric(df[["National Accounts-Based Variables, Total Factor Productivity at Constant National Prices (2017=1), Constant Prices"]]))
-  ar1 <- arima(diff(tfp), order = c(1, 0, 0))
-  rho <- 1 + ar1$coef[["ar1"]]
-  sigma_eps <- sqrt(ar1$sigma2)
+  ar1 <- arima(tfp, order = c(1, 0, 0))
+  rho <- max(min(ar1$coef[["ar1"]], 0.99), -0.99)
+  sigma_eps <- min(sqrt(ar1$sigma2), 0.05)
   list(alpha = alpha, delta = delta, beta = beta, rho = rho, sigma_eps = sigma_eps, theta = 2, phi = 1)
 }
 

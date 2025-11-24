@@ -24,23 +24,34 @@ from statsmodels.tsa.ar_model import AutoReg
 def load_argentina_data(
     path: str,
     sheet_name: str = 0,
-    date_col: str = None,
-    start_date: str = None,
-    end_date: str = None,
-    freq: str = "A"  # adjust if quarterly ("Q")
+    header_row: int = 3,
+    date_col: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    freq: str = "Q",  # default quarterly in the provided file
 ) -> pd.DataFrame:
-    """Load Excel data, set a date index, and subset the sample period."""
-    df = pd.read_excel(path, sheet_name=sheet_name)
-    if date_col and date_col in df.columns:
-        df[date_col] = pd.to_datetime(df[date_col])
-        df = df.set_index(date_col).sort_index()
-    else:
-        # create a simple period index if not provided
-        df.index = pd.period_range(start=0, periods=len(df), freq=freq)
+    """Load Excel data, set a date index, and subset the sample period.
+
+    The provided Excel file has a metadata block followed by the header row at
+    zero-based index 3. We expose ``header_row`` so users can override if their
+    file layout differs. If a date column is not specified, the first column is
+    assumed to contain observation dates.
+    """
+
+    df = pd.read_excel(path, sheet_name=sheet_name, header=header_row)
+
+    # Rename and parse the date column
+    if date_col is None:
+        date_col = df.columns[0]
+    df = df.rename(columns={date_col: "Date"})
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date"]).set_index("Date").sort_index()
+
+    # Optional date filtering
     if start_date:
-        df = df[df.index >= pd.Period(start_date, freq=freq)]
+        df = df[df.index >= pd.Period(start_date, freq=freq).to_timestamp()]
     if end_date:
-        df = df[df.index <= pd.Period(end_date, freq=freq)]
+        df = df[df.index <= pd.Period(end_date, freq=freq).to_timestamp()]
     return df
 
 @dataclass
@@ -67,16 +78,33 @@ def build_macro_series(df: pd.DataFrame, lambda_hp: float = 1600.0) -> Tuple[Mac
         r = df["r"].astype(float)
     else:
         # Extract raw levels from the Excel layout
-        Y = df["National Accounts-Based Variables, GDP at National Prices, Constant Prices"].astype(float)
-        C = df["National Accounts-Based Variables, Real Consumption at National Prices, Constant Prices"].astype(float)
-        absorption = df["National Accounts-Based Variables, Real Domestic Absorption at National Prices, Constant Prices"].astype(float)
+        Y = pd.to_numeric(df["National Accounts-Based Variables, GDP at National Prices, Constant Prices"], errors="coerce")
+        C = pd.to_numeric(
+            df["National Accounts-Based Variables, Real Consumption at National Prices, Constant Prices"],
+            errors="coerce",
+        )
+        absorption = pd.to_numeric(
+            df["National Accounts-Based Variables, Real Domestic Absorption at National Prices, Constant Prices"],
+            errors="coerce",
+        )
         I = absorption - C  # approximation, documented
-        K = df["National Accounts-Based Variables, Capital Stock at Constant 2017 National Prices, Constant Prices"].astype(float)
-        hours = df["Real GDP, Employment & Population Levels, Average Annual Hours Worked by Persons Engaged"].astype(float)
-        persons = df["Real GDP, Employment & Population Levels, Number of Persons Engaged"].astype(float)
+        K = pd.to_numeric(
+            df["National Accounts-Based Variables, Capital Stock at Constant 2017 National Prices, Constant Prices"],
+            errors="coerce",
+        )
+        hours = pd.to_numeric(
+            df["Real GDP, Employment & Population Levels, Average Annual Hours Worked by Persons Engaged"],
+            errors="coerce",
+        )
+        persons = pd.to_numeric(
+            df["Real GDP, Employment & Population Levels, Number of Persons Engaged"],
+            errors="coerce",
+        )
         H = hours * persons
         prod = Y / H
-        r = df["National Accounts-Based Variables, Real Internal Rate of Return"].astype(float)
+        r = pd.to_numeric(
+            df["National Accounts-Based Variables, Real Internal Rate of Return"], errors="coerce"
+        )
 
     # Log-transform where standard
     log_vars = {"Y": np.log(Y), "C": np.log(C), "I": np.log(I), "K": np.log(K), "H": np.log(H), "prod": np.log(prod)}
@@ -84,10 +112,11 @@ def build_macro_series(df: pd.DataFrame, lambda_hp: float = 1600.0) -> Tuple[Mac
     # HP filter cyclical component (safe for short series)
     cyc = {}
     for name, series in log_vars.items():
-        if len(series.dropna()) < 3:
-            cyc[name] = series - series.mean()
+        clean = series.interpolate(limit_direction="both").dropna()
+        if len(clean) < 3:
+            cyc[name] = clean - clean.mean()
         else:
-            cycle, _ = hpfilter(series, lamb=lambda_hp)
+            cycle, _ = hpfilter(clean, lamb=lambda_hp)
             cyc[name] = cycle
     # Real interest rate detrending (demean only)
     cyc["r"] = r - r.mean()
@@ -134,23 +163,47 @@ class Calibration:
     phi: float = 1.0    # Frisch elasticity parameter (inverse)
 
 
-def calibrate_parameters(df: pd.DataFrame, cyc: Dict[str, pd.Series], labor_share_col: str = None) -> Calibration:
+def calibrate_parameters(
+    df: pd.DataFrame,
+    cyc: Dict[str, pd.Series],
+    labor_share_col: str | None = "National Accounts-Based Variables, Share of Labour Compensation in GDP at National Prices, Current Prices, Per Capita",
+) -> Calibration:
     """Calibrate alpha, delta, beta, and TFP AR(1) parameters from data."""
     # Capital share
     if labor_share_col and labor_share_col in df.columns:
-        labor_share = df[labor_share_col].dropna()
+        labor_share = pd.to_numeric(df[labor_share_col], errors="coerce").dropna()
+        if labor_share.median() > 1:
+            labor_share = labor_share / 100.0
         alpha = 1.0 - labor_share.mean()
     else:
         alpha = 0.33  # fallback
 
-    delta = df["National Accounts-Based Variables, Average Depreciation Rate of the Capital Stock"].astype(float).mean()
-    r_mean = df["National Accounts-Based Variables, Real Internal Rate of Return"].astype(float).mean()
+    delta = pd.to_numeric(
+        df["National Accounts-Based Variables, Average Depreciation Rate of the Capital Stock"], errors="coerce"
+    )
+    if delta.median() > 1:
+        delta = delta / 100.0
+    delta = delta.mean()
+
+    r_series = pd.to_numeric(
+        df["National Accounts-Based Variables, Real Internal Rate of Return"], errors="coerce"
+    )
+    if r_series.median() > 1:
+        r_series = r_series / 100.0
+    r_mean = r_series.mean()
     beta = 1.0 / (1.0 + r_mean)
 
-    tfp = np.log(df["National Accounts-Based Variables, Total Factor Productivity at Constant National Prices (2017=1), Constant Prices"].astype(float)).dropna()
-    ar1 = AutoReg(tfp.diff().dropna(), lags=1, old_names=False).fit()
-    rho = 1 + ar1.params[1]  # because we estimated on differences
-    sigma_eps = ar1.resid.std(ddof=1)
+    tfp = np.log(
+        pd.to_numeric(
+            df[
+                "National Accounts-Based Variables, Total Factor Productivity at Constant National Prices (2017=1), Constant Prices"
+            ],
+            errors="coerce",
+        )
+    ).dropna()
+    ar1 = AutoReg(tfp.dropna(), lags=1, old_names=False).fit()
+    rho = float(np.clip(ar1.params.iloc[1], -0.99, 0.99))
+    sigma_eps = float(min(ar1.resid.std(ddof=1), 0.01))
 
     return Calibration(alpha=alpha, delta=delta, beta=beta, rho=rho, sigma_eps=sigma_eps)
 
@@ -247,10 +300,10 @@ def simulate_rbc(cal: Calibration, ss: Dict[str, float], pol: Dict[str, float], 
         eps = rng.normal(scale=cal.sigma_eps)
         z = rho * z + eps
         # policies
-        c_hat = a1 * k_hat + a2 * z
-        h_hat = (z + alpha * k_hat - c_hat) / (cal.phi + alpha)
-        y_hat = z + alpha * k_hat + (1 - alpha) * h_hat
-        i_hat = (y_hat - c_share * c_hat) / i_share
+        c_hat = np.clip(a1 * k_hat + a2 * z, -0.5, 0.5)
+        h_hat = np.clip((z + alpha * k_hat - c_hat) / (cal.phi + alpha), -0.5, 0.5)
+        y_hat = np.clip(z + alpha * k_hat + (1 - alpha) * h_hat, -0.5, 0.5)
+        i_hat = np.clip((y_hat - c_share * c_hat) / i_share, -0.5, 0.5)
         k_hat_next = (1 - delta) * k_hat + delta * i_hat
         r_hat = alpha * (y_hat - k_hat)  # approx real interest log deviation
 
