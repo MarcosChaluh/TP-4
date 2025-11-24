@@ -81,13 +81,28 @@ build_macro_series <- function(df, lambda_hp = 1600) {
 }
 
 std_corr_table <- function(cyc, var_order) {
+  corr_with_shift <- function(x, y, k) {
+    len <- min(length(x), length(y))
+    x <- tail(as.numeric(x), len)
+    y <- tail(as.numeric(y), len)
+    if (len <= abs(k)) return(NA_real_)
+    if (k > 0) {
+      return(cor(x[(1 + k):len], y[1:(len - k)], use = "pairwise.complete"))
+    } else if (k < 0) {
+      k <- abs(k)
+      return(cor(x[1:(len - k)], y[(1 + k):len], use = "pairwise.complete"))
+    } else {
+      return(cor(x, y, use = "pairwise.complete"))
+    }
+  }
+
   y <- cyc$Y
   rows <- lapply(var_order, function(v) {
     x <- cyc[[v]]
     sigma <- sd(x, na.rm = TRUE)
-    corr_lag <- cor(x, dplyr::lag(y, 1), use = "pairwise.complete")
-    corr_contemp <- cor(x, y, use = "pairwise.complete")
-    corr_lead <- cor(x, dplyr::lead(y, 1), use = "pairwise.complete")
+    corr_lag <- corr_with_shift(x, y, -1)
+    corr_contemp <- corr_with_shift(x, y, 0)
+    corr_lead <- corr_with_shift(x, y, 1)
     data.frame(Variable = v, StdDev = sigma, Corr_Y_t_1 = corr_lag, Corr_Y_t = corr_contemp, Corr_Y_t1 = corr_lead)
   })
   bind_rows(rows) %>% tibble::column_to_rownames("Variable")
