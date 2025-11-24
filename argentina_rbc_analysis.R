@@ -23,7 +23,7 @@ suppressPackageStartupMessages({
 # Data handling
 # -----------------------------
 load_argentina_data <- function(path, sheet = 1, date_col = NULL, start_date = NULL, end_date = NULL, freq = "A") {
-  df <- read_excel(path, sheet = sheet)
+  df <- read_excel(path, sheet = sheet) %>% as.data.frame()
   if (!is.null(date_col) && date_col %in% names(df)) {
     df[[date_col]] <- as.Date(df[[date_col]])
     df <- df %>% arrange(.data[[date_col]]) %>% tibble::column_to_rownames(date_col)
@@ -39,20 +39,39 @@ load_argentina_data <- function(path, sheet = 1, date_col = NULL, start_date = N
   return(df)
 }
 
+detrend_hp_safe <- function(x, lambda_hp) {
+  if (length(stats::na.omit(x)) < 3) {
+    # Fallback when HP filter cannot be computed (avoids diag() error)
+    return(x - mean(x, na.rm = TRUE))
+  }
+  return(hpfilter(x, freq = lambda_hp)$cycle)
+}
+
 build_macro_series <- function(df, lambda_hp = 1600) {
-  Y <- as.numeric(df[["National Accounts-Based Variables, GDP at National Prices, Constant Prices"]])
-  C <- as.numeric(df[["National Accounts-Based Variables, Real Consumption at National Prices, Constant Prices"]])
-  absorption <- as.numeric(df[["National Accounts-Based Variables, Real Domestic Absorption at National Prices, Constant Prices"]])
-  I <- absorption - C
-  K <- as.numeric(df[["National Accounts-Based Variables, Capital Stock at Constant 2017 National Prices, Constant Prices"]])
-  hours <- as.numeric(df[["Real GDP, Employment & Population Levels, Average Annual Hours Worked by Persons Engaged"]])
-  persons <- as.numeric(df[["Real GDP, Employment & Population Levels, Number of Persons Engaged"]])
-  H <- hours * persons
-  prod <- Y / H
-  r <- as.numeric(df[["National Accounts-Based Variables, Real Internal Rate of Return"]])
+  # Accept both raw Excel format and already-simulated data with short variable names
+  if (all(c("Y", "C", "I", "K", "H", "prod", "r") %in% names(df))) {
+    Y <- as.numeric(df$Y)
+    C <- as.numeric(df$C)
+    I <- as.numeric(df$I)
+    K <- as.numeric(df$K)
+    H <- as.numeric(df$H)
+    prod <- as.numeric(df$prod)
+    r <- as.numeric(df$r)
+  } else {
+    Y <- as.numeric(df[["National Accounts-Based Variables, GDP at National Prices, Constant Prices"]])
+    C <- as.numeric(df[["National Accounts-Based Variables, Real Consumption at National Prices, Constant Prices"]])
+    absorption <- as.numeric(df[["National Accounts-Based Variables, Real Domestic Absorption at National Prices, Constant Prices"]])
+    I <- absorption - C
+    K <- as.numeric(df[["National Accounts-Based Variables, Capital Stock at Constant 2017 National Prices, Constant Prices"]])
+    hours <- as.numeric(df[["Real GDP, Employment & Population Levels, Average Annual Hours Worked by Persons Engaged"]])
+    persons <- as.numeric(df[["Real GDP, Employment & Population Levels, Number of Persons Engaged"]])
+    H <- hours * persons
+    prod <- Y / H
+    r <- as.numeric(df[["National Accounts-Based Variables, Real Internal Rate of Return"]])
+  }
 
   log_vars <- list(Y = log(Y), C = log(C), I = log(I), K = log(K), H = log(H), prod = log(prod))
-  cyc <- lapply(log_vars, function(x) hpfilter(x, freq = lambda_hp)$cycle)
+  cyc <- lapply(log_vars, function(x) detrend_hp_safe(x, lambda_hp))
   cyc$r <- r - mean(r, na.rm = TRUE)
   list(levels = list(Y = Y, C = C, I = I, K = K, H = H, prod = prod, r = r), cyc = cyc)
 }

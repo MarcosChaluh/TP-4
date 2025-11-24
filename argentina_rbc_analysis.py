@@ -56,26 +56,39 @@ class MacroSeries:
 
 def build_macro_series(df: pd.DataFrame, lambda_hp: float = 1600.0) -> Tuple[MacroSeries, Dict[str, pd.Series]]:
     """Construct macro series and their cyclical (HP-filtered) components."""
-    # Extract raw levels
-    Y = df["National Accounts-Based Variables, GDP at National Prices, Constant Prices"].astype(float)
-    C = df["National Accounts-Based Variables, Real Consumption at National Prices, Constant Prices"].astype(float)
-    absorption = df["National Accounts-Based Variables, Real Domestic Absorption at National Prices, Constant Prices"].astype(float)
-    I = absorption - C  # approximation, documented
-    K = df["National Accounts-Based Variables, Capital Stock at Constant 2017 National Prices, Constant Prices"].astype(float)
-    hours = df["Real GDP, Employment & Population Levels, Average Annual Hours Worked by Persons Engaged"].astype(float)
-    persons = df["Real GDP, Employment & Population Levels, Number of Persons Engaged"].astype(float)
-    H = hours * persons
-    prod = Y / H
-    r = df["National Accounts-Based Variables, Real Internal Rate of Return"].astype(float)
+    # Accept both the raw Excel data and simulated data with short variable names
+    if all(col in df.columns for col in ["Y", "C", "I", "K", "H", "prod", "r"]):
+        Y = df["Y"].astype(float)
+        C = df["C"].astype(float)
+        I = df["I"].astype(float)
+        K = df["K"].astype(float)
+        H = df["H"].astype(float)
+        prod = df["prod"].astype(float)
+        r = df["r"].astype(float)
+    else:
+        # Extract raw levels from the Excel layout
+        Y = df["National Accounts-Based Variables, GDP at National Prices, Constant Prices"].astype(float)
+        C = df["National Accounts-Based Variables, Real Consumption at National Prices, Constant Prices"].astype(float)
+        absorption = df["National Accounts-Based Variables, Real Domestic Absorption at National Prices, Constant Prices"].astype(float)
+        I = absorption - C  # approximation, documented
+        K = df["National Accounts-Based Variables, Capital Stock at Constant 2017 National Prices, Constant Prices"].astype(float)
+        hours = df["Real GDP, Employment & Population Levels, Average Annual Hours Worked by Persons Engaged"].astype(float)
+        persons = df["Real GDP, Employment & Population Levels, Number of Persons Engaged"].astype(float)
+        H = hours * persons
+        prod = Y / H
+        r = df["National Accounts-Based Variables, Real Internal Rate of Return"].astype(float)
 
     # Log-transform where standard
     log_vars = {"Y": np.log(Y), "C": np.log(C), "I": np.log(I), "K": np.log(K), "H": np.log(H), "prod": np.log(prod)}
 
-    # HP filter cyclical component
+    # HP filter cyclical component (safe for short series)
     cyc = {}
     for name, series in log_vars.items():
-        cycle, _ = hpfilter(series, lamb=lambda_hp)
-        cyc[name] = cycle
+        if len(series.dropna()) < 3:
+            cyc[name] = series - series.mean()
+        else:
+            cycle, _ = hpfilter(series, lamb=lambda_hp)
+            cyc[name] = cycle
     # Real interest rate detrending (demean only)
     cyc["r"] = r - r.mean()
 
