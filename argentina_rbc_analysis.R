@@ -119,12 +119,13 @@ calibrate_parameters <- function(df, labor_share_col = "National Accounts-Based 
   } else {
     alpha <- 0.33
   }
+  alpha <- min(max(alpha, 0.05), 0.9)
   delta <- as.numeric(df[["National Accounts-Based Variables, Average Depreciation Rate of the Capital Stock"]])
   if (median(delta, na.rm = TRUE) > 1) delta <- delta / 100
-  delta <- mean(delta, na.rm = TRUE)
+  delta <- min(max(mean(delta, na.rm = TRUE), 0.005), 0.15)
   r_mean <- as.numeric(df[["National Accounts-Based Variables, Real Internal Rate of Return"]])
   if (median(r_mean, na.rm = TRUE) > 1) r_mean <- r_mean / 100
-  r_mean <- mean(r_mean, na.rm = TRUE)
+  r_mean <- min(max(mean(r_mean, na.rm = TRUE), 0.005), 0.1)
   beta <- 1 / (1 + r_mean)
 
   tfp <- log(as.numeric(df[["National Accounts-Based Variables, Total Factor Productivity at Constant National Prices (2017=1), Constant Prices"]]))
@@ -142,6 +143,9 @@ steady_state <- function(cal) {
   k_ss <- k_over_h * h_ss
   i_ss <- cal$delta * k_ss
   c_ss <- y_ss - i_ss
+  if (!is.finite(c_ss) || c_ss <= 0) c_ss <- max(1e-3, 0.7 * y_ss)
+  if (!is.finite(k_ss) || k_ss <= 0) k_ss <- max(1e-3, h_ss)
+  if (!is.finite(y_ss) || y_ss <= 0) y_ss <- max(1e-3, k_ss^(cal$alpha) * h_ss^(1 - cal$alpha))
   list(r_k = r_k, k_ss = k_ss, h_ss = h_ss, y_ss = y_ss, c_ss = c_ss, i_ss = i_ss)
 }
 
@@ -180,7 +184,11 @@ solve_linear_policies <- function(cal, ss) {
   i_share <- ss$i_ss / ss$y_ss
   phi_euler <- (cal$alpha * ss$y_ss / ss$k_ss) / (cal$alpha * ss$y_ss / ss$k_ss + 1 - cal$delta)
   coeffs <- sym_solve_coefficients(cal$alpha, cal$delta, cal$phi, c_share, i_share, phi_euler, cal$rho)
-  list(c_k = coeffs$a1, c_z = coeffs$a2, c_share = c_share, i_share = i_share, phi_euler = phi_euler)
+  c_k <- min(max(coeffs$a1, -1.5), 1.5)
+  c_z <- min(max(coeffs$a2, -1.5), 1.5)
+  if (!is.finite(c_share) || c_share <= 0) c_share <- 0.7
+  if (!is.finite(i_share) || i_share <= 0) i_share <- 0.2
+  list(c_k = c_k, c_z = c_z, c_share = c_share, i_share = i_share, phi_euler = phi_euler)
 }
 
 simulate_rbc <- function(cal, ss, pol, T, burnin = 50, seed = 0) {
@@ -191,12 +199,19 @@ simulate_rbc <- function(cal, ss, pol, T, burnin = 50, seed = 0) {
   for (t in seq_len(T + burnin)) {
     eps <- rnorm(1, sd = cal$sigma_eps)
     z <- cal$rho * z + eps
+    z <- min(max(z, -4), 4)
     c_hat <- pol$c_k * k_hat + pol$c_z * z
+    c_hat <- min(max(c_hat, -4), 4)
     h_hat <- (z + cal$alpha * k_hat - c_hat) / (cal$phi + cal$alpha)
+    h_hat <- min(max(h_hat, -4), 4)
     y_hat <- z + cal$alpha * k_hat + (1 - cal$alpha) * h_hat
+    y_hat <- min(max(y_hat, -4), 4)
     i_hat <- (y_hat - pol$c_share * c_hat) / pol$i_share
+    i_hat <- min(max(i_hat, -4), 4)
     k_hat_next <- (1 - cal$delta) * k_hat + cal$delta * i_hat
+    k_hat_next <- min(max(k_hat_next, -4), 4)
     r_hat <- cal$alpha * (y_hat - k_hat)
+    r_hat <- min(max(r_hat, -4), 4)
 
     c <- ss$c_ss * exp(c_hat)
     h <- ss$h_ss * exp(h_hat)
