@@ -92,3 +92,46 @@ Estas ecuaciones en $(k_t, c_t, h_t, y_t, i_t, a_t)$ se combinan para resolver p
 - La log-linealización se usa para simular el modelo ante choques de PTF, generar series sintéticas de $Y,C,I,K,H$ y productividad, y luego calcular desviaciones cíclicas con HP para llenar la Tabla 14.2 de momentos simulados.
 - La Tabla 14.1 se obtiene aplicando HP y las fórmulas de volatilidades y correlaciones a los datos observados.
 
+## 9. Funciones de impulso-respuesta (FIR) a un choque tecnológico positivo y transitorio
+Para un choque $\varepsilon_0>0$ en $a_t$, con $a_t = \rho_A a_{t-1} + \varepsilon_t$ y $|\rho_A|<1$, las FIR log-lineales resultan de resolver el sistema de $(y_t,c_t,i_t,k_t,h_t)$ con $a_t$ exógeno y $k_{t+1} = (1-\delta)k_t + \delta i_t$:
+
+1. **Producción**: $y_t = a_t + \alpha k_t + (1-\alpha) h_t$ responde instantáneamente por $a_t$ (impacto 1 a 1) y adicionalmente por $h_t$ y, con rezago, por $k_t$.
+2. **Horas**: de $\phi h_t = w_t - \sigma c_t$ y $w_t = a_t + \alpha k_t - \alpha h_t$, se obtiene
+   $$ h_t = \frac{1}{\phi + \alpha}\Big( a_t + \alpha k_t - \sigma c_t \Big). $$
+   Impacto positivo: sube el salario marginal $\Rightarrow$ aumentan horas; el efecto se atenúa cuando $c_t$ reacciona al alza (si $\sigma>0$).
+3. **Consumo**: la Euler
+   $$ c_t = E_t[c_{t+1}] - \underbrace{\left(\tfrac{1-\beta(1-\delta)}{\beta\alpha}\right)}_{\kappa} (E_t[y_{t+1}] - E_t[k_{t+1}]) $$
+   implica que un choque que eleva $E_t[y_{t+1}]$ incrementa $c_t$ ya en el impacto; la suavización hace que la respuesta sea más persistente que la de $y_t$.
+4. **Inversión y capital**: usando $y_t = c\, c_t + i\, i_t$ y $k_{t+1} = (1-\delta)k_t + \delta i_t$, la inversión salta fuertemente (para aprovechar la mayor productividad futura) y el capital se ajusta gradualmente, generando forma de "hump" (respuestas crecientes en los primeros períodos).
+5. **Renta del capital y tasa real**: $r_t = a_t + (\alpha-1)k_t + (1-\alpha)h_t$ sube en el impacto por $a_t$ y más si $h_t$ crece; luego cae a medida que $k_t$ sube.
+
+### Forma típica de las FIR (intuición económica)
+- **$Y_t$**: salto inmediato (por $a_t$ y $H_t$) seguido de trayectoria en campana por acumulación de $K_t$.
+- **$C_t$**: incremento moderado y persistente (suavización intertemporal), con menor volatilidad relativa que $Y_t$.
+- **$I_t$**: mayor elasticidad; pico inicial pronunciado y posible sobre-impulso antes de normalizarse.
+- **$K_t$**: ajuste lento y monótono al nuevo nivel, retornando cuando $a_t$ se disipa.
+- **$H_t$**: aumenta en el impacto; con $\phi$ alto (oferta menos elástica) la respuesta es acotada; con $\phi$ bajo es mayor.
+- **$r_t$**: sube al impacto y retrocede conforme $K_t$ crece.
+
+Si se grafican (ejes: tiempo en el eje horizontal; desviaciones en log o porcentajes en el vertical), las curvas se ven como: $Y_t$ y $H_t$ con pico contemporáneo; $I_t$ con sobre-reacción inicial; $C_t$ con curva suave; $K_t$ creciente y luego convergente.
+
+## 10. Una extensión breve: costo de ajuste de capital
+Para acercar el modelo a datos donde la inversión no es extremadamente volátil, se puede añadir un costo cuadrático de ajuste:
+$$ \text{costo}_t = \frac{\psi}{2}\left(\frac{I_t}{K_t} - \delta\right)^2 K_t. $$
+
+### Ecuaciones principales
+- **Restricción de recursos**: $Y_t = C_t + I_t + \text{costo}_t$.
+- **Acumulación de capital**: $K_{t+1} = (1-\delta)K_t + I_t$ (igual que antes).
+- **Euler modificada** (en términos reales):
+  $$ 1 = \beta E_t\Bigg[ (1+r_{t+1}-\delta)\frac{u_C(C_t,H_t)}{u_C(C_{t+1},H_{t+1})} - \psi\left(\frac{I_{t+1}}{K_{t+1}}-\delta\right) \frac{I_{t+1}}{K_{t+1}} \frac{u_C(C_t,H_t)}{u_C(C_{t+1},H_{t+1})} \Bigg]. $$
+  En log-lineal, la inversión responde menos que en el RBC básico porque el término de costo penaliza saltos en $I_t/K_t$.
+- **FOC de inversión** (condición de Tobin-q):
+  $$ q_t = 1 + \psi\left(\frac{I_t}{K_t}-\delta\right), \quad q_t = \beta E_t\left[ q_{t+1}(1-\delta) + (1+r_{t+1}-\delta) \right]. $$
+  Donde $q_t$ es el valor sombra del capital (Tobin-q). En el límite $\psi \to 0$ recupera el modelo básico.
+
+### Hallazgos e intuición
+- Un $\psi>0$ **suaviza la inversión**: las FIR de $I_t$ y $K_t$ presentan menores picos y transiciones más graduales.
+- **Consumo** absorbe más del choque contemporáneo (menor presión a invertir de inmediato), elevando su correlación con $Y_t$.
+- **Renta del capital** fluctúa menos bruscamente porque la acumulación de $K_t$ es más lenta.
+- En datos, este ajuste ayuda a igualar la volatilidad relativa de inversión y las correlaciones a lo observado en muchos países (incluida Argentina), y puede mejorar el calce de la Tabla 14.2 frente a la 14.1.
+
