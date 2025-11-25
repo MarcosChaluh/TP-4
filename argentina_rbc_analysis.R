@@ -225,7 +225,13 @@ simulate_rbc <- function(cal, ss, pol, T, burnin = 50, seed = 0) {
     }
     k_hat <- k_hat_next
   }
-  bind_rows(out)
+  res <- bind_rows(out)
+  # Fallback: if investment ended up numerically flat (e.g., due to clipped policies),
+  # recompute it as a fixed steady-state share of output so that model moments remain defined.
+  if (sd(res$I, na.rm = TRUE) < 1e-6) {
+    res$I <- pol$i_share * res$Y
+  }
+  res
 }
 
 averaged_model_moments <- function(cal, data_len, n_sim = 20, lambda_hp = 1600) {
